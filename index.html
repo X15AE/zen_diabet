@@ -132,6 +132,31 @@
     border-radius:2px;
   }
 
+  /* напис "Since" у лівому верхньому куті */
+  .since{
+    position:fixed; top:clamp(14px,3vh,28px); left:clamp(14px,3.2vw,30px);
+    z-index:4; color:var(--cap);
+    font-size:clamp(.6rem,1.5vw,.92rem);
+    letter-spacing:.18em; text-transform:uppercase; font-weight:500;
+    text-shadow:0 2px 12px rgba(0,0,0,.6);
+    user-select:none;
+  }
+  /* перемикач мови у правому верхньому куті */
+  .lang{
+    position:fixed; top:clamp(12px,2.6vh,26px); right:clamp(14px,3.2vw,30px);
+    z-index:4;
+    padding:6px 13px; border-radius:999px;
+    background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.18);
+    color:var(--btn); cursor:pointer;
+    font-size:.78rem; letter-spacing:.14em; font-weight:600;
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    text-shadow:0 1px 8px rgba(0,0,0,.5);
+    transition:background .2s ease, transform .1s ease;
+    user-select:none;
+  }
+  .lang:hover{ background:rgba(0,0,0,.5); }
+  .lang:active{ transform:scale(.95); }
+
   @media (prefers-reduced-motion: reduce){
     .dot.pulse{animation:none}
     .num{transition:none}
@@ -139,6 +164,11 @@
 </style>
 </head>
 <body>
+  <!-- напис "з якого часу" (перемикається з мовою) -->
+  <div id="since" class="since">з лютого 2026</div>
+  <!-- перемикач мови: показує мову, на яку перемкне -->
+  <div id="langToggle" class="lang" role="button" tabindex="0" aria-label="Switch language">EN</div>
+
   <!-- ВІДЕО-ФОН: поклади ocean.mp4 поруч із цим файлом.
        muted+autoplay+loop+playsinline — щоб відео саме крутилось (звук — окремо з музики). -->
   <video id="bgvideo" autoplay muted loop playsinline preload="auto">
@@ -157,15 +187,15 @@
   <div class="wrap">
     <div class="stat">
       <div class="num" id="pricks">0</div>
-      <div class="cap">Проколів пальця</div>
+      <div class="cap" id="cap-pricks">Проколів пальця</div>
     </div>
     <div class="stat">
       <div class="num" id="units">0</div>
-      <div class="cap">Одиниць інсуліну</div>
+      <div class="cap" id="cap-units">Одиниць інсуліну</div>
     </div>
     <div class="stat">
       <div class="num" id="injections">0</div>
-      <div class="cap">Уколів інсуліну</div>
+      <div class="cap" id="cap-injections">Уколів інсуліну</div>
     </div>
   </div>
 
@@ -200,14 +230,59 @@ var POLL_MS  = 30000;
 var FALLBACK_TIMEOUT_MS = 12000;
 /* ======================================================= */
 
-var fmtInt   = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 });
-var fmtUnits = new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-
 var shown = { pricks: 0, units: 0, injections: 0 };
 var anim  = { pricks: null, units: null, injections: null };
 
+/* ---- мови ---- */
+var I18N = {
+  uk: {
+    htmlLang: 'uk', locale: 'uk-UA', langBtn: 'EN',
+    'cap-pricks': 'Проколів пальця',
+    'cap-units': 'Одиниць інсуліну',
+    'cap-injections': 'Уколів інсуліну',
+    since: 'з лютого 2026'
+  },
+  en: {
+    htmlLang: 'en', locale: 'en-US', langBtn: 'UK',
+    'cap-pricks': 'Finger pricks',
+    'cap-units': 'Insulin units',
+    'cap-injections': 'Insulin injections',
+    since: 'Since February 2026'
+  }
+};
+var lang = 'uk';
+try { var saved = localStorage.getItem('zen_lang'); if (saved === 'en' || saved === 'uk') lang = saved; } catch(e){}
+
+// кеш форматувальників чисел за локаллю
+var fmtCache = {};
+function getFmt(loc, kind){
+  var k = loc + '|' + kind;
+  if (!fmtCache[k]){
+    fmtCache[k] = (kind === 'units')
+      ? new Intl.NumberFormat(loc, { minimumFractionDigits:1, maximumFractionDigits:1 })
+      : new Intl.NumberFormat(loc, { maximumFractionDigits:0 });
+  }
+  return fmtCache[k];
+}
 function fmt(key, v){
-  return key === 'units' ? fmtUnits.format(v) : fmtInt.format(Math.round(v));
+  var loc = I18N[lang].locale;
+  return key === 'units' ? getFmt(loc,'units').format(v) : getFmt(loc,'int').format(Math.round(v));
+}
+
+function applyLang(l){
+  lang = (l === 'en' || l === 'uk') ? l : 'uk';
+  var t = I18N[lang];
+  document.documentElement.lang = t.htmlLang;
+  document.getElementById('cap-pricks').textContent = t['cap-pricks'];
+  document.getElementById('cap-units').textContent = t['cap-units'];
+  document.getElementById('cap-injections').textContent = t['cap-injections'];
+  document.getElementById('since').textContent = t.since;
+  document.getElementById('langToggle').textContent = t.langBtn;
+  // переформатувати поточні числа під нову локаль (миттєво, без анімації)
+  document.getElementById('pricks').textContent     = fmt('pricks', shown.pricks);
+  document.getElementById('units').textContent      = fmt('units', shown.units);
+  document.getElementById('injections').textContent = fmt('injections', shown.injections);
+  try { localStorage.setItem('zen_lang', lang); } catch(e){}
 }
 
 function animateTo(key, target){
@@ -337,6 +412,11 @@ function bindBtn(el, fn){
 }
 bindBtn(btnVideo, toggleVideo);
 bindBtn(btnAudio, toggleAudio);
+
+/* перемикач мови */
+var langToggle = document.getElementById('langToggle');
+bindBtn(langToggle, function(){ applyLang(lang === 'uk' ? 'en' : 'uk'); });
+applyLang(lang);   // застосувати збережену (або дефолтну) мову на старті
 
 // деякі браузери блокують навіть muted-автоплей до взаємодії — підстрахуємось
 window.addEventListener('load', function(){
