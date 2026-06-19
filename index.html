@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Дзен-монітор</title>
+<style>
+  :root{
+    --bg-top:#0a0f12;
+    --bg-bot:#0c1a1e;
+    --num:#ffffff;
+    --cap:#aebcc2;
+    --accent:#f0c674;
+    --live:#5ccb8a;
+    --live-stale:#d8a657;
+    --overlay:0.45;           /* затемнення відео (0..1): більше = темніше, числа читабельніші */
+    --btn:#cdd7db;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:linear-gradient(180deg,var(--bg-top) 0%, var(--bg-bot) 100%);
+    color:var(--num);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ВІДЕО-ФОН на весь екран */
+  #bgvideo{
+    position:fixed; inset:0;
+    width:100%; height:100%;
+    object-fit:cover;
+    z-index:0;
+    background:#000;
+  }
+  /* затемнення поверх відео, щоб числа читалися */
+  #overlay{
+    position:fixed; inset:0; z-index:1;
+    background:
+      radial-gradient(120% 120% at 50% 40%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.35) 100%),
+      rgba(0,0,0,var(--overlay));
+    pointer-events:none;
+  }
+
+  .wrap{
+    position:relative; z-index:2;
+    height:100dvh; height:100vh;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:clamp(18px,4.5vh,54px);
+    padding:24px;
+    text-shadow:0 2px 18px rgba(0,0,0,.55);   /* числа читабельні на будь-якому відео */
+  }
+
+  .stat{ text-align:center; line-height:1; }
+  .num{
+    font-variant-numeric:tabular-nums;
+    font-feature-settings:"tnum" 1;
+    font-weight:600;
+    font-size:clamp(2.6rem,12vw,9rem);
+    letter-spacing:-0.02em;
+    transition:text-shadow .25s ease, transform .25s ease;
+    will-change:transform;
+  }
+  .num.flash{
+    color:var(--accent);
+    text-shadow:0 0 28px rgba(240,198,116,.6), 0 0 64px rgba(240,198,116,.35), 0 2px 18px rgba(0,0,0,.55);
+    transform:scale(1.04);
+  }
+  .cap{
+    margin-top:clamp(6px,1.4vh,16px);
+    color:var(--cap);
+    font-size:clamp(.62rem,1.7vw,1rem);
+    letter-spacing:.28em;
+    text-transform:uppercase;
+    font-weight:500;
+  }
+
+  .footer{
+    position:fixed; left:0; right:0; bottom:clamp(16px,3vh,40px);
+    z-index:3;
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    color:var(--cap);
+    text-shadow:0 2px 12px rgba(0,0,0,.6);
+  }
+  .clock{
+    font-variant-numeric:tabular-nums;
+    font-feature-settings:"tnum" 1;
+    font-size:clamp(.9rem,2.4vw,1.3rem);
+    letter-spacing:.08em;
+  }
+  .dot{
+    width:9px; height:9px; border-radius:50%;
+    background:var(--live);
+    box-shadow:0 0 0 0 rgba(92,203,138,.6);
+  }
+  .dot.pulse{ animation:pulse 1s ease-out; }
+  .dot.stale{ background:var(--live-stale); box-shadow:none; }
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(92,203,138,.6);}
+    100%{box-shadow:0 0 0 12px rgba(92,203,138,0);}
+  }
+
+  /* КНОПКИ керування (відео і музика окремо) */
+  .controls{
+    position:fixed; right:clamp(14px,3vw,28px); bottom:clamp(14px,3vh,34px);
+    z-index:4;
+    display:flex; gap:12px;
+  }
+  .ctrl{
+    width:46px; height:46px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.32);
+    border:1px solid rgba(255,255,255,.18);
+    color:var(--btn);
+    cursor:pointer;
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+    transition:background .2s ease, opacity .2s ease, transform .1s ease;
+    position:relative;
+  }
+  .ctrl:hover{ background:rgba(0,0,0,.5); }
+  .ctrl:active{ transform:scale(.94); }
+  .ctrl svg{ width:22px; height:22px; display:block; }
+  /* стан "вимкнено": приглушуємо й малюємо діагональну риску */
+  .ctrl.off{ opacity:.5; }
+  .ctrl.off::after{
+    content:""; position:absolute; left:9px; right:9px; top:50%;
+    height:2px; background:currentColor; transform:rotate(-45deg);
+    border-radius:2px;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .dot.pulse{animation:none}
+    .num{transition:none}
+  }
+</style>
+</head>
+<body>
+  <!-- ВІДЕО-ФОН: поклади ocean.mp4 поруч із цим файлом.
+       muted+autoplay+loop+playsinline — щоб відео саме крутилось (звук — окремо з музики). -->
+  <video id="bgvideo" autoplay muted loop playsinline preload="auto">
+    <source src="ocean.mp4" type="video/mp4">
+  </video>
+  <div id="overlay"></div>
+
+  <!-- МУЗИКА: поклади Thai.ogg і Thai.mp3 поруч. Автоплей зі звуком браузер блокує —
+       вмикається кнопкою. Зацикленість — атрибут loop.
+       Два джерела: Ogg (Chrome/Firefox, менший) + MP3 (Safari/iOS, бо Safari Ogg не вміє). -->
+  <audio id="bgaudio" loop preload="auto">
+    <source src="Thai.ogg" type="audio/ogg">
+    <source src="Thai.mp3" type="audio/mpeg">
+  </audio>
+
+  <div class="wrap">
+    <div class="stat">
+      <div class="num" id="pricks">0</div>
+      <div class="cap">Проколів пальця</div>
+    </div>
+    <div class="stat">
+      <div class="num" id="units">0</div>
+      <div class="cap">Одиниць інсуліну</div>
+    </div>
+    <div class="stat">
+      <div class="num" id="injections">0</div>
+      <div class="cap">Уколів інсуліну</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span class="dot" id="dot"></span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+
+  <div class="controls">
+    <!-- кнопка ВІДЕО -->
+    <div class="ctrl" id="btnVideo" role="button" tabindex="0" aria-label="Відео фон" title="Відео фон">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="6" width="13" height="12" rx="2"></rect>
+        <path d="M15 10l6-3v10l-6-3"></path>
+      </svg>
+    </div>
+    <!-- кнопка МУЗИКИ -->
+    <div class="ctrl off" id="btnAudio" role="button" tabindex="0" aria-label="Музика" title="Музика">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 18V5l10-2v13"></path>
+        <circle cx="6" cy="18" r="3"></circle>
+        <circle cx="16" cy="16" r="3"></circle>
+      </svg>
+    </div>
+  </div>
+
+<script>
+/* ===================== НАЛАШТУВАННЯ ===================== */
+// Встав сюди /exec URL свого Apps Script веб-застосунку (інструкція в README).
+var ENDPOINT = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+var POLL_MS  = 30000;
+var FALLBACK_TIMEOUT_MS = 12000;
+/* ======================================================= */
+
+var fmtInt   = new Intl.NumberFormat('uk-UA', { maximumFractionDigits: 0 });
+var fmtUnits = new Intl.NumberFormat('uk-UA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+var shown = { pricks: 0, units: 0, injections: 0 };
+var anim  = { pricks: null, units: null, injections: null };
+
+function fmt(key, v){
+  return key === 'units' ? fmtUnits.format(v) : fmtInt.format(Math.round(v));
+}
+
+function animateTo(key, target){
+  var el = document.getElementById(key);
+  var from = shown[key];
+  if (from === target){ el.textContent = fmt(key, target); return; }
+
+  if (target > from){
+    el.classList.add('flash');
+    setTimeout(function(){ el.classList.remove('flash'); }, 1000);
+  }
+
+  if (anim[key]) cancelAnimationFrame(anim[key]);
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce){ shown[key] = target; el.textContent = fmt(key, target); return; }
+
+  var dur = 1200, t0 = performance.now();
+  function step(now){
+    var p = Math.min(1, (now - t0) / dur);
+    var eased = 1 - Math.pow(1 - p, 3);
+    var val = from + (target - from) * eased;
+    el.textContent = fmt(key, val);
+    if (p < 1){ anim[key] = requestAnimationFrame(step); }
+    else { shown[key] = target; el.textContent = fmt(key, target); anim[key] = null; }
+  }
+  anim[key] = requestAnimationFrame(step);
+}
+
+function setDot(ok){
+  var dot = document.getElementById('dot');
+  if (ok){
+    dot.classList.remove('stale');
+    dot.classList.remove('pulse'); void dot.offsetWidth; dot.classList.add('pulse');
+  } else {
+    dot.classList.add('stale');
+  }
+}
+
+function applyData(d){
+  if (!d || d.ok === false) { setDot(false); return; }
+  if (typeof d.pricks === 'number')     animateTo('pricks', d.pricks);
+  if (typeof d.units === 'number')      animateTo('units', d.units);
+  if (typeof d.injections === 'number') animateTo('injections', d.injections);
+  setDot(true);
+}
+
+/* ---- JSONP (назовні йдуть лише 3 числа) ---- */
+var jsonpId = 0;
+function fetchStats(){
+  if (!ENDPOINT || ENDPOINT.indexOf('PASTE_') === 0) return;
+  jsonpId++;
+  var fn = '__zen_cb_' + jsonpId + '_' + Date.now();
+  var script = document.createElement('script');
+  var done = false;
+
+  var timer = setTimeout(function(){
+    if (done) return; done = true; cleanup(); setDot(false);
+  }, FALLBACK_TIMEOUT_MS);
+
+  function cleanup(){
+    try { delete window[fn]; } catch(e){ window[fn] = undefined; }
+    if (script.parentNode) script.parentNode.removeChild(script);
+    clearTimeout(timer);
+  }
+  window[fn] = function(data){ if (done) return; done = true; cleanup(); applyData(data); };
+  script.onerror = function(){ if (done) return; done = true; cleanup(); setDot(false); };
+
+  var sep = ENDPOINT.indexOf('?') >= 0 ? '&' : '?';
+  script.src = ENDPOINT + sep + 'callback=' + fn + '&_=' + Date.now();
+  document.head.appendChild(script);
+}
+
+/* ---- годинник ---- */
+function tickClock(){
+  var d = new Date();
+  var p = function(n){ return String(n).padStart(2,'0'); };
+  document.getElementById('clock').textContent = p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* ---- опитування з паузою на прихованій вкладці ---- */
+var pollTimer = null;
+function startPolling(){ if (pollTimer) return; fetchStats(); pollTimer = setInterval(fetchStats, POLL_MS); }
+function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+document.addEventListener('visibilitychange', function(){
+  if (document.hidden){ stopPolling(); } else { startPolling(); }
+});
+startPolling();
+
+/* ===================== КЕРУВАННЯ ВІДЕО / МУЗИКОЮ ===================== */
+var video = document.getElementById('bgvideo');
+var audio = document.getElementById('bgaudio');
+var btnVideo = document.getElementById('btnVideo');
+var btnAudio = document.getElementById('btnAudio');
+
+// ВІДЕО: стартує саме (muted autoplay). Кнопка — пауза/пуск.
+function toggleVideo(){
+  if (video.paused){
+    video.play().then(function(){ btnVideo.classList.remove('off'); })
+                .catch(function(){ /* якщо не вийшло — лишаємо як є */ });
+  } else {
+    video.pause();
+    btnVideo.classList.add('off');
+  }
+}
+video.addEventListener('play',  function(){ btnVideo.classList.remove('off'); });
+video.addEventListener('pause', function(){ btnVideo.classList.add('off'); });
+
+// МУЗИКА: автоплей зі звуком блокується — стартує off, вмикається кнопкою.
+function toggleAudio(){
+  if (audio.paused){
+    audio.play().then(function(){ btnAudio.classList.remove('off'); })
+                .catch(function(){ btnAudio.classList.add('off'); });
+  } else {
+    audio.pause();
+    btnAudio.classList.add('off');
+  }
+}
+audio.addEventListener('play',  function(){ btnAudio.classList.remove('off'); });
+audio.addEventListener('pause', function(){ btnAudio.classList.add('off'); });
+
+function bindBtn(el, fn){
+  el.addEventListener('click', fn);
+  el.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); fn(); }
+  });
+}
+bindBtn(btnVideo, toggleVideo);
+bindBtn(btnAudio, toggleAudio);
+
+// деякі браузери блокують навіть muted-автоплей до взаємодії — підстрахуємось
+window.addEventListener('load', function(){
+  var pr = video.play();
+  if (pr && pr.catch){ pr.catch(function(){ btnVideo.classList.add('off'); }); }
+});
+</script>
+</body>
+</html>
