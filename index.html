@@ -60,7 +60,7 @@
     font-variant-numeric:tabular-nums;
     font-feature-settings:"tnum" 1;
     font-weight:600;
-    font-size:clamp(2.6rem,12vw,9rem);
+    font-size:clamp(2.6rem,12vw,6.5rem);
     letter-spacing:-0.02em;
     transition:text-shadow .25s ease, transform .25s ease;
     will-change:transform;
@@ -77,6 +77,16 @@
     letter-spacing:.28em;
     text-transform:uppercase;
     font-weight:500;
+  }
+  /* рядок еквівалента: тиха "думка" під числами, над таймером */
+  .equiv{
+    color:var(--cap);
+    font-size:clamp(.72rem,1.9vw,1.05rem);
+    letter-spacing:.06em;
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+    opacity:0;
+    transition:opacity .9s ease;
   }
 
   .footer{
@@ -197,11 +207,12 @@
       <div class="num" id="injections">0</div>
       <div class="cap" id="cap-injections">Уколів інсуліну</div>
     </div>
+    <div class="equiv" id="equiv"></div>
   </div>
 
   <div class="footer">
     <span class="dot" id="dot"></span>
-    <span class="clock" id="clock">--:--:--</span>
+    <span class="clock" id="timer">—</span>
   </div>
 
   <div class="controls">
@@ -240,33 +251,41 @@ var I18N = {
     'cap-pricks': 'Проколів пальця',
     'cap-units': 'Одиниць інсуліну',
     'cap-injections': 'Уколів інсуліну',
-    since: 'з лютого 2026'
+    since: 'з лютого 2026',
+    equivKwh: 'день ≈ {n} кВт·год'
   },
   en: {
     htmlLang: 'en', locale: 'en-US', langBtn: 'UK',
     'cap-pricks': 'Finger pricks',
     'cap-units': 'Insulin units',
     'cap-injections': 'Insulin injections',
-    since: 'Since February 2026'
+    since: 'Since February 2026',
+    equivKwh: 'day ≈ {n} kWh'
   }
 };
 var lang = 'uk';
 try { var saved = localStorage.getItem('zen_lang'); if (saved === 'en' || saved === 'uk') lang = saved; } catch(e){}
 
-// кеш форматувальників чисел за локаллю
+// стан, що приходить з ендпоінта
+var firstRecordMs = null;   // старт таймера
+var kwhPerDay = null;       // еквівалент для рядка Е
+
+// кеш форматувальників чисел за локаллю (усі числа — цілі)
 var fmtCache = {};
-function getFmt(loc, kind){
-  var k = loc + '|' + kind;
-  if (!fmtCache[k]){
-    fmtCache[k] = (kind === 'units')
-      ? new Intl.NumberFormat(loc, { minimumFractionDigits:1, maximumFractionDigits:1 })
-      : new Intl.NumberFormat(loc, { maximumFractionDigits:0 });
-  }
-  return fmtCache[k];
+function getFmt(loc){
+  if (!fmtCache[loc]) fmtCache[loc] = new Intl.NumberFormat(loc, { maximumFractionDigits:0 });
+  return fmtCache[loc];
 }
 function fmt(key, v){
-  var loc = I18N[lang].locale;
-  return key === 'units' ? getFmt(loc,'units').format(v) : getFmt(loc,'int').format(Math.round(v));
+  return getFmt(I18N[lang].locale).format(Math.round(v));
+}
+
+// рядок еквівалента "день ≈ N кВт·год" (мовою + з числом ендпоінта)
+function renderEquiv(){
+  var el = document.getElementById('equiv');
+  if (kwhPerDay == null){ el.textContent = ''; el.style.opacity = '0'; return; }
+  el.textContent = I18N[lang].equivKwh.replace('{n}', String(kwhPerDay));
+  el.style.opacity = '1';
 }
 
 function applyLang(l){
@@ -282,6 +301,7 @@ function applyLang(l){
   document.getElementById('pricks').textContent     = fmt('pricks', shown.pricks);
   document.getElementById('units').textContent      = fmt('units', shown.units);
   document.getElementById('injections').textContent = fmt('injections', shown.injections);
+  renderEquiv();
   try { localStorage.setItem('zen_lang', lang); } catch(e){}
 }
 
@@ -326,6 +346,8 @@ function applyData(d){
   if (typeof d.pricks === 'number')     animateTo('pricks', d.pricks);
   if (typeof d.units === 'number')      animateTo('units', d.units);
   if (typeof d.injections === 'number') animateTo('injections', d.injections);
+  if (typeof d.firstRecord === 'number'){ firstRecordMs = d.firstRecord; tickTimer(); }
+  if (typeof d.kwhPerDay === 'number'){ kwhPerDay = d.kwhPerDay; renderEquiv(); }
   setDot(true);
 }
 
@@ -355,13 +377,21 @@ function fetchStats(){
   document.head.appendChild(script);
 }
 
-/* ---- годинник ---- */
-function tickClock(){
-  var d = new Date();
+/* ---- таймер: скільки ведеться лічильник (від firstRecord) ---- */
+function tickTimer(){
+  var el = document.getElementById('timer');
+  if (firstRecordMs == null){ el.textContent = '—'; return; }
+  var diff = Date.now() - firstRecordMs;
+  if (diff < 0) diff = 0;
+  var s = Math.floor(diff / 1000);
+  var days = Math.floor(s / 86400);
+  var hh = Math.floor((s % 86400) / 3600);
+  var mm = Math.floor((s % 3600) / 60);
+  var ss = s % 60;
   var p = function(n){ return String(n).padStart(2,'0'); };
-  document.getElementById('clock').textContent = p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  el.textContent = days + ':' + p(hh) + ':' + p(mm) + ':' + p(ss);
 }
-setInterval(tickClock, 1000); tickClock();
+setInterval(tickTimer, 1000); tickTimer();
 
 /* ---- опитування з паузою на прихованій вкладці ---- */
 var pollTimer = null;
