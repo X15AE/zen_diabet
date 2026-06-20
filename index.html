@@ -60,7 +60,7 @@
     font-variant-numeric:tabular-nums;
     font-feature-settings:"tnum" 1;
     font-weight:600;
-    font-size:clamp(2.8rem,16vw,9rem);
+    font-size:clamp(2.8rem,19vw,9rem);
     letter-spacing:-0.02em;
     transition:text-shadow .25s ease, transform .25s ease;
     will-change:transform;
@@ -366,6 +366,12 @@ function equivSlotText(slot){
 var equivIdx = 0;
 var equivTimer = null;
 
+// індекс першого ТОВАРНОГО слота (не kWh) — щоб лайкнутий стартував з товару
+function firstItemIdx(slots){
+  for (var i=0;i<slots.length;i++){ if (slots[i].type==='item') return i; }
+  return 0;
+}
+
 function renderEquiv(){
   var el = document.getElementById('equiv');
   var slots = buildEquivSlots();
@@ -383,15 +389,19 @@ function renderEquiv(){
     return;
   }
 
-  // після лайка: показуємо поточний слот + крутимо ротацію
+  // лайкнуто: якщо ротація ще НЕ стартувала (свіжий захід уже-лайкнутого) —
+  // почати одразу з ТОВАРУ, а не з kWh; далі крутиться як зазвичай
+  if (equivTimer === null) equivIdx = firstItemIdx(slots);
   if (equivIdx >= slots.length) equivIdx = 0;
   el.textContent = equivSlotText(slots[equivIdx]);
   el.style.opacity = '1';
-  ensureEquivRotation();
+  ensureEquivRotation(slots);
 }
 
-function ensureEquivRotation(){
+function ensureEquivRotation(slots){
   if (equivTimer) return;
+  if (!slots) slots = buildEquivSlots();
+  if (slots.length <= 1) return;   // нема чим крутити (товари ще не завантажились) — не стартуємо
   equivTimer = setInterval(function(){
     if (!hasLiked){ stopEquivRotation(); return; }
     var s = buildEquivSlots();
@@ -550,7 +560,17 @@ function sendLike(){
   likesShown = likesShown + 1;
   renderLikeState();
   popHeart();
-  renderEquiv();   // лайк відкриває товарну ротацію
+  // лайк ОЖИВЛЯЄ рядок одразу: плавний перехід kWh -> перший товар (не чекати 30с)
+  (function(){
+    var slots = buildEquivSlots();
+    if (slots.length >= 2){
+      equivIdx = firstItemIdx(slots);
+      fadeEquivTo(equivSlotText(slots[equivIdx]));
+      ensureEquivRotation(slots);
+    } else {
+      renderEquiv();   // товарів ще нема — самовиправиться при завантаженні даних
+    }
+  })();
   try { localStorage.setItem('zen_liked', '1'); } catch(e){}
 
   jsonpLike(function(data){
