@@ -80,6 +80,8 @@
   }
   /* рядок еквівалента: тиха "думка" під числами, над таймером */
   .equiv{
+    width:100%;
+    max-width:100%;
     color:var(--cap);
     font-size:clamp(.72rem,1.9vw,1.05rem);
     letter-spacing:.06em;
@@ -87,6 +89,24 @@
     text-align:center;
     opacity:0;
     transition:opacity .6s ease;
+  }
+  .equiv--marquee{
+    overflow:hidden;
+    white-space:nowrap;
+    text-align:left;
+    -webkit-mask-image:linear-gradient(to right, transparent 0, #000 7%, #000 93%, transparent 100%);
+    mask-image:linear-gradient(to right, transparent 0, #000 7%, #000 93%, transparent 100%);
+  }
+  .equiv-track{
+    display:inline-flex;
+    white-space:nowrap;
+    will-change:transform;
+    animation:equiv-scroll 60s linear infinite;
+  }
+  .equiv-track span{ white-space:nowrap; }
+  @keyframes equiv-scroll{
+    from{ transform:translateX(0); }
+    to{ transform:translateX(-50%); }
   }
 
   .footer{
@@ -293,8 +313,8 @@ var I18N = {
     'cap-injections': 'Уколів інсуліну',
     since: 'з лютого 2026',
     equivKwh: 'вартість дня ≈ {n} кВт·год',
-    equivItem: 'вартість дня ≈ {v} {name}',
-    equivNames: { oil: 'нафти', wheat: 'пшениці', coffee: 'кави', gold: 'золота' },
+    tickerHead: 'вартість дня ≈ ',
+    kwhUnit: 'кВт·год',
     likeLabel: 'Подобається'
   },
   en: {
@@ -304,8 +324,8 @@ var I18N = {
     'cap-injections': 'Insulin injections',
     since: 'Since February 2026',
     equivKwh: 'a day ≈ {n} kWh',
-    equivItem: 'a day ≈ {v} {name}',
-    equivNames: { oil: 'of oil', wheat: 'of wheat', coffee: 'of coffee', gold: 'of gold' },
+    tickerHead: 'a day ≈ ',
+    kwhUnit: 'kWh',
     likeLabel: 'Like'
   }
 };
@@ -337,88 +357,112 @@ function localizeEquivValue(val){
   return val;
 }
 
-// список доступних "слотів": kWh (завжди перший) + наявні товари
-function buildEquivSlots(){
-  var slots = [];
-  if (kwhPerDay != null) slots.push({ type:'kwh' });
-  if (equivData){
-    var order = ['oil','wheat','coffee','gold'];
-    for (var i=0;i<order.length;i++){
-      var k = order[i];
-      if (equivData[k]) slots.push({ type:'item', key:k });
-    }
+// ── рядок Е як біжуча стрічка (marquee) ──────────────────────────────
+// Метадані всіх позицій. kind: kwh|bourse|retail|fuel.
+//  bourse: значення — рядок з одиницею ("3.1 л") з equivData.bourse; tail=назва; mark=біржа
+//  retail/fuel: значення — число з equivData.retail/.fuel; unit=одиниця; tail=назва; mark=NOVUS/WOG
+var TICKER = [
+  { key:'kwh',        kind:'kwh' },
+  { key:'oil',        kind:'bourse', mark:'ICE',   tail_uk:'нафти',    tail_en:'of oil' },
+  { key:'wheat',      kind:'bourse', mark:'CBOT',  tail_uk:'пшениці',  tail_en:'of wheat' },
+  { key:'coffee',     kind:'bourse', mark:'ICE',   tail_uk:'кави',     tail_en:'of coffee' },
+  { key:'gold',       kind:'bourse', mark:'COMEX', tail_uk:'золота',   tail_en:'of gold' },
+  { key:'diesel',     kind:'fuel',   mark:'WOG',   unit_uk:'л',  unit_en:'L',  tail_uk:'дизелю',   tail_en:'of diesel' },
+  { key:'cola',       kind:'retail', mark:'NOVUS', unit_uk:'банки', unit_en:'cans', tail_uk:'коли',     tail_en:'of cola' },
+  { key:'energy',     kind:'retail', mark:'NOVUS', unit_uk:'банки', unit_en:'cans', tail_uk:'Red Bull', tail_en:'of Red Bull' },
+  { key:'cigs',       kind:'retail', mark:'NOVUS', unit_uk:'',  unit_en:'',  tail_uk:'сигарети', tail_en:'cigarettes' },
+  { key:'whiskey',    kind:'retail', mark:'NOVUS', unit_uk:'мл', unit_en:'ml', tail_uk:'віскі',    tail_en:'of whiskey' },
+  { key:'beef',       kind:'retail', mark:'NOVUS', unit_uk:'г',  unit_en:'g',  tail_uk:'яловичини',tail_en:'of beef' },
+  { key:'pork',       kind:'retail', mark:'NOVUS', unit_uk:'г',  unit_en:'g',  tail_uk:'свинини',  tail_en:'of pork' },
+  { key:'coffeeShop', kind:'retail', mark:'NOVUS', unit_uk:'г',  unit_en:'g',  tail_uk:'кави',     tail_en:'of coffee' }
+];
+var TICKER_SEP = '\u2003•\u2003';   // em-space • em-space
+
+// число за правилом показу: <10 -> 1 знак; >=10 -> ціле (крапка як роздільник, як у біржі)
+function fmtNum(n){
+  if (n < 10) return (Math.round(n * 10) / 10).toFixed(1);
+  return String(Math.round(n));
+}
+
+// текст однієї позиції стрічки (null, якщо даних нема)
+function tickerItemText(item){
+  var uk = (lang === 'uk');
+  if (item.kind === 'kwh'){
+    if (kwhPerDay == null) return null;
+    return String(kwhPerDay) + ' ' + I18N[lang].kwhUnit;   // "17 кВт·год" — без маркера
   }
-  return slots;
+  var mark = item.mark ? ' · ' + item.mark : '';
+  if (item.kind === 'bourse'){
+    var bsrc = equivData && equivData.bourse;
+    var bv = bsrc ? bsrc[item.key] : null;
+    if (!bv) return null;
+    var btail = uk ? item.tail_uk : item.tail_en;
+    return localizeEquivValue(bv) + ' ' + btail + mark;    // "3.1 л нафти · ICE"
+  }
+  // retail / fuel — число
+  var src = (item.kind === 'retail') ? (equivData && equivData.retail)
+                                     : (equivData && equivData.fuel);
+  if (!src) return null;
+  var num = src[item.key];
+  if (num == null) return null;
+  var unit = uk ? item.unit_uk : item.unit_en;
+  var tail = uk ? item.tail_uk : item.tail_en;
+  var parts = [fmtNum(num)];
+  if (unit) parts.push(unit);
+  if (tail) parts.push(tail);
+  return parts.join(' ') + mark;   // "2.5 банки коли · NOVUS" / "8.1 сигарети · NOVUS"
 }
 
-// біржі-джерела цін (статичні — біржі не міняються; мовно-нейтральні абревіатури)
-var EXCH = { oil:'ICE', wheat:'CBOT', coffee:'ICE', gold:'COMEX' };
-
-function equivSlotText(slot){
-  var t = I18N[lang];
-  if (slot.type === 'kwh') return t.equivKwh.replace('{n}', String(kwhPerDay));
-  var val = localizeEquivValue(equivData[slot.key]);
-  var name = t.equivNames[slot.key] || '';
-  var exch = EXCH[slot.key] ? ' · ' + EXCH[slot.key] : '';
-  return t.equivItem.replace('{v}', val).replace('{name}', name) + exch;
+// повний текст стрічки (заголовок + усі позиції + хвостовий роздільник для безшовності)
+function buildTickerText(){
+  var parts = [];
+  for (var i = 0; i < TICKER.length; i++){
+    var s = tickerItemText(TICKER[i]);
+    if (s) parts.push(s);
+  }
+  if (!parts.length) return '';
+  return I18N[lang].tickerHead + parts.join(TICKER_SEP) + TICKER_SEP;
 }
 
-var equivIdx = 0;
-var equivTimer = null;
-
-// індекс першого ТОВАРНОГО слота (не kWh) — щоб лайкнутий стартував з товару
-function firstItemIdx(slots){
-  for (var i=0;i<slots.length;i++){ if (slots[i].type==='item') return i; }
-  return 0;
-}
+var lastTickerText = null;
 
 function renderEquiv(){
   var el = document.getElementById('equiv');
-  var slots = buildEquivSlots();
-  if (slots.length === 0){ stopEquivRotation(); el.textContent = ''; el.style.opacity = '0'; return; }
+  if (kwhPerDay == null){ el.innerHTML = ''; el.style.opacity = '0'; lastTickerText = null; return; }
 
   if (!hasLiked){
-    // до лайка: лише kWh, фіксовано, без ротації
-    stopEquivRotation();
-    equivIdx = 0;
-    var kwhSlot = null;
-    for (var i=0;i<slots.length;i++){ if (slots[i].type==='kwh'){ kwhSlot = slots[i]; break; } }
-    if (!kwhSlot) kwhSlot = slots[0];
-    el.textContent = equivSlotText(kwhSlot);
+    // до лайка: статичний kWh по центру, без руху
+    el.classList.remove('equiv--marquee');
+    el.innerHTML = '';
+    lastTickerText = null;
+    var span = document.createElement('span');
+    span.textContent = I18N[lang].equivKwh.replace('{n}', String(kwhPerDay));
+    el.appendChild(span);
     el.style.opacity = '1';
     return;
   }
 
-  // лайкнуто: якщо ротація ще НЕ стартувала (свіжий захід уже-лайкнутого) —
-  // почати одразу з ТОВАРУ, а не з kWh; далі крутиться як зазвичай
-  if (equivTimer === null) equivIdx = firstItemIdx(slots);
-  if (equivIdx >= slots.length) equivIdx = 0;
-  el.textContent = equivSlotText(slots[equivIdx]);
+  // після лайка: біжуча стрічка з усіма позиціями
+  buildMarquee();
   el.style.opacity = '1';
-  ensureEquivRotation(slots);
 }
 
-function ensureEquivRotation(slots){
-  if (equivTimer) return;
-  if (!slots) slots = buildEquivSlots();
-  if (slots.length <= 1) return;   // нема чим крутити (товари ще не завантажились) — не стартуємо
-  equivTimer = setInterval(function(){
-    if (!hasLiked){ stopEquivRotation(); return; }
-    var s = buildEquivSlots();
-    if (s.length <= 1) return;
-    equivIdx = (equivIdx + 1) % s.length;
-    fadeEquivTo(equivSlotText(s[equivIdx]));
-  }, 30000);
-}
-
-function stopEquivRotation(){
-  if (equivTimer){ clearInterval(equivTimer); equivTimer = null; }
-}
-
-function fadeEquivTo(text){
+function buildMarquee(){
   var el = document.getElementById('equiv');
-  el.style.opacity = '0';
-  setTimeout(function(){ el.textContent = text; el.style.opacity = '1'; }, 600);
+  var text = buildTickerText();
+  if (!text){ el.innerHTML = ''; el.style.opacity = '0'; lastTickerText = null; return; }
+  // той самий текст і стрічка вже йде — НЕ перебудовуємо (інакше анімація стрибне на старт)
+  if (el.classList.contains('equiv--marquee') && text === lastTickerText) return;
+  lastTickerText = text;
+  el.classList.add('equiv--marquee');
+  el.innerHTML = '';
+  var track = document.createElement('div');
+  track.className = 'equiv-track';
+  var a = document.createElement('span'); a.textContent = text;
+  var b = document.createElement('span'); b.textContent = text;   // друга копія — безшовний цикл
+  track.appendChild(a);
+  track.appendChild(b);
+  el.appendChild(track);
 }
 
 function applyLang(l){
@@ -560,17 +604,7 @@ function sendLike(){
   likesShown = likesShown + 1;
   renderLikeState();
   popHeart();
-  // лайк ОЖИВЛЯЄ рядок одразу: плавний перехід kWh -> перший товар (не чекати 30с)
-  (function(){
-    var slots = buildEquivSlots();
-    if (slots.length >= 2){
-      equivIdx = firstItemIdx(slots);
-      fadeEquivTo(equivSlotText(slots[equivIdx]));
-      ensureEquivRotation(slots);
-    } else {
-      renderEquiv();   // товарів ще нема — самовиправиться при завантаженні даних
-    }
-  })();
+  renderEquiv();   // лайк оживляє: рядок стає біжучою стрічкою з усіма позиціями
   try { localStorage.setItem('zen_liked', '1'); } catch(e){}
 
   jsonpLike(function(data){
