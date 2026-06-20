@@ -79,23 +79,37 @@
     font-weight:500;
   }
   /* рядок еквівалента: тиха "думка" під числами, над таймером */
-  .equiv{
+  .equiv-row{
     width:100%;
     max-width:100%;
+    display:flex;
+    align-items:baseline;
+    justify-content:center;
+    gap:.45em;
     color:var(--cap);
     font-size:clamp(.72rem,1.9vw,1.05rem);
     letter-spacing:.06em;
-    font-variant-numeric:tabular-nums;
-    text-align:center;
     opacity:0;
     transition:opacity .6s ease;
   }
-  .equiv--marquee{
+  .equiv-label{
+    flex:none;
+    white-space:nowrap;
+    display:none;            /* видно лише в режимі стрічки (після лайка) */
+  }
+  .equiv-row--marquee .equiv-label{ display:inline; }
+  .equiv{
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+  }
+  .equiv-row--marquee .equiv{
+    flex:1 1 auto;
+    min-width:0;
     overflow:hidden;
     white-space:nowrap;
     text-align:left;
-    -webkit-mask-image:linear-gradient(to right, transparent 0, #000 7%, #000 93%, transparent 100%);
-    mask-image:linear-gradient(to right, transparent 0, #000 7%, #000 93%, transparent 100%);
+    -webkit-mask-image:linear-gradient(to right, transparent 0, #000 6%, #000 94%, transparent 100%);
+    mask-image:linear-gradient(to right, transparent 0, #000 6%, #000 94%, transparent 100%);
   }
   .equiv-track{
     display:inline-flex;
@@ -261,7 +275,10 @@
       <div class="num" id="injections">0</div>
       <div class="cap" id="cap-injections">Уколів інсуліну</div>
     </div>
-    <div class="equiv" id="equiv"></div>
+    <div class="equiv-row" id="equivRow">
+      <span class="equiv-label" id="equivLabel"></span>
+      <div class="equiv" id="equiv"></div>
+    </div>
   </div>
 
   <div class="footer">
@@ -413,7 +430,7 @@ function tickerItemText(item){
   return parts.join(' ') + mark;   // "2.5 банки коли · NOVUS" / "8.1 сигарети · NOVUS"
 }
 
-// повний текст стрічки (заголовок + усі позиції + хвостовий роздільник для безшовності)
+// повний текст стрічки (лише значення + хвостовий роздільник; заголовок — фіксований ярлик)
 function buildTickerText(){
   var parts = [];
   for (var i = 0; i < TICKER.length; i++){
@@ -421,40 +438,44 @@ function buildTickerText(){
     if (s) parts.push(s);
   }
   if (!parts.length) return '';
-  return I18N[lang].tickerHead + parts.join(TICKER_SEP) + TICKER_SEP;
+  return parts.join(TICKER_SEP) + TICKER_SEP;
 }
 
 var lastTickerText = null;
 
 function renderEquiv(){
+  var row = document.getElementById('equivRow');
+  var label = document.getElementById('equivLabel');
   var el = document.getElementById('equiv');
-  if (kwhPerDay == null){ el.innerHTML = ''; el.style.opacity = '0'; lastTickerText = null; return; }
+  if (kwhPerDay == null){ row.style.opacity = '0'; el.innerHTML = ''; lastTickerText = null; return; }
 
   if (!hasLiked){
-    // до лайка: статичний kWh по центру, без руху
-    el.classList.remove('equiv--marquee');
+    // до лайка: статичний повний рядок по центру, ярлик прихований
+    row.classList.remove('equiv-row--marquee');
+    label.textContent = '';
     el.innerHTML = '';
     lastTickerText = null;
     var span = document.createElement('span');
     span.textContent = I18N[lang].equivKwh.replace('{n}', String(kwhPerDay));
     el.appendChild(span);
-    el.style.opacity = '1';
+    row.style.opacity = '1';
     return;
   }
 
-  // після лайка: біжуча стрічка з усіма позиціями
+  // після лайка: фіксований ярлик зліва + біжуча стрічка значень праворуч
+  label.textContent = I18N[lang].tickerHead;
+  row.classList.add('equiv-row--marquee');
   buildMarquee();
-  el.style.opacity = '1';
+  row.style.opacity = '1';
 }
 
 function buildMarquee(){
   var el = document.getElementById('equiv');
   var text = buildTickerText();
-  if (!text){ el.innerHTML = ''; el.style.opacity = '0'; lastTickerText = null; return; }
-  // той самий текст і стрічка вже йде — НЕ перебудовуємо (інакше анімація стрибне на старт)
-  if (el.classList.contains('equiv--marquee') && text === lastTickerText) return;
+  if (!text){ el.innerHTML = ''; lastTickerText = null; return; }
+  // та сама стрічка вже йде — НЕ перебудовуємо (інакше анімація стрибне на старт)
+  if (text === lastTickerText && el.firstChild) return;
   lastTickerText = text;
-  el.classList.add('equiv--marquee');
   el.innerHTML = '';
   var track = document.createElement('div');
   track.className = 'equiv-track';
