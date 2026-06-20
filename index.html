@@ -60,7 +60,7 @@
     font-variant-numeric:tabular-nums;
     font-feature-settings:"tnum" 1;
     font-weight:600;
-    font-size:clamp(2.6rem,12vw,6.5rem);
+    font-size:clamp(2.6rem,12vw,9rem);
     letter-spacing:-0.02em;
     transition:text-shadow .25s ease, transform .25s ease;
     will-change:transform;
@@ -86,15 +86,21 @@
     font-variant-numeric:tabular-nums;
     text-align:center;
     opacity:0;
-    transition:opacity .9s ease;
+    transition:opacity .6s ease;
   }
 
   .footer{
-    position:fixed; left:0; right:0; bottom:clamp(16px,3vh,40px);
+    position:fixed; left:0; right:0; bottom:clamp(14px,3vh,34px);
+    height:46px;
     z-index:3;
     display:flex; align-items:center; justify-content:center; gap:14px;
     color:var(--cap);
     text-shadow:0 2px 12px rgba(0,0,0,.6);
+  }
+  /* мобільний: на вузькому екрані центрований футер налазив би на кнопки
+     відео/звуку (правий кут) — піднімаємо його над ними */
+  @media (max-width:600px){
+    .footer{ bottom:88px; }
   }
   .clock{
     font-variant-numeric:tabular-nums;
@@ -287,6 +293,8 @@ var I18N = {
     'cap-injections': 'Уколів інсуліну',
     since: 'з лютого 2026',
     equivKwh: 'вартість дня ≈ {n} кВт·год',
+    equivItem: 'вартість дня ≈ {v} {name}',
+    equivNames: { oil: 'нафти', wheat: 'пшениці', coffee: 'кави', gold: 'золота' },
     likeLabel: 'Подобається'
   },
   en: {
@@ -296,6 +304,8 @@ var I18N = {
     'cap-injections': 'Insulin injections',
     since: 'Since February 2026',
     equivKwh: 'a day ≈ {n} kWh',
+    equivItem: 'a day ≈ {v} {name}',
+    equivNames: { oil: 'of oil', wheat: 'of wheat', coffee: 'of coffee', gold: 'of gold' },
     likeLabel: 'Like'
   }
 };
@@ -304,7 +314,8 @@ try { var saved = localStorage.getItem('zen_lang'); if (saved === 'en' || saved 
 
 // стан, що приходить з ендпоінта
 var firstRecordMs = null;   // старт таймера
-var kwhPerDay = null;       // еквівалент для рядка Е
+var kwhPerDay = null;       // еквівалент kWh
+var equivData = null;       // товарні еквіваленти {oil,wheat,coffee,gold} або null
 
 // кеш форматувальників чисел за локаллю (усі числа — цілі, без розділювача розрядів)
 var fmtCache = {};
@@ -316,12 +327,84 @@ function fmt(key, v){
   return getFmt(I18N[lang].locale).format(Math.round(v));
 }
 
-// рядок еквівалента "день ≈ N кВт·год" (мовою + з числом ендпоінта)
+/* ---- рядок еквівалента: kWh + товарна ротація після лайка ---- */
+// для EN перекладаємо кириличну одиницю з M1 ("3.1 л" -> "3.1 L")
+var UNIT_EN = { 'л':'L', 'кг':'kg', 'г':'g', 'мг':'mg' };
+function localizeEquivValue(val){
+  if (lang === 'uk') return val;
+  var parts = String(val).split(' ');
+  if (parts.length === 2 && UNIT_EN[parts[1]]) return parts[0] + ' ' + UNIT_EN[parts[1]];
+  return val;
+}
+
+// список доступних "слотів": kWh (завжди перший) + наявні товари
+function buildEquivSlots(){
+  var slots = [];
+  if (kwhPerDay != null) slots.push({ type:'kwh' });
+  if (equivData){
+    var order = ['oil','wheat','coffee','gold'];
+    for (var i=0;i<order.length;i++){
+      var k = order[i];
+      if (equivData[k]) slots.push({ type:'item', key:k });
+    }
+  }
+  return slots;
+}
+
+function equivSlotText(slot){
+  var t = I18N[lang];
+  if (slot.type === 'kwh') return t.equivKwh.replace('{n}', String(kwhPerDay));
+  var val = localizeEquivValue(equivData[slot.key]);
+  var name = t.equivNames[slot.key] || '';
+  return t.equivItem.replace('{v}', val).replace('{name}', name);
+}
+
+var equivIdx = 0;
+var equivTimer = null;
+
 function renderEquiv(){
   var el = document.getElementById('equiv');
-  if (kwhPerDay == null){ el.textContent = ''; el.style.opacity = '0'; return; }
-  el.textContent = I18N[lang].equivKwh.replace('{n}', String(kwhPerDay));
+  var slots = buildEquivSlots();
+  if (slots.length === 0){ stopEquivRotation(); el.textContent = ''; el.style.opacity = '0'; return; }
+
+  if (!hasLiked){
+    // до лайка: лише kWh, фіксовано, без ротації
+    stopEquivRotation();
+    equivIdx = 0;
+    var kwhSlot = null;
+    for (var i=0;i<slots.length;i++){ if (slots[i].type==='kwh'){ kwhSlot = slots[i]; break; } }
+    if (!kwhSlot) kwhSlot = slots[0];
+    el.textContent = equivSlotText(kwhSlot);
+    el.style.opacity = '1';
+    return;
+  }
+
+  // після лайка: показуємо поточний слот + крутимо ротацію
+  if (equivIdx >= slots.length) equivIdx = 0;
+  el.textContent = equivSlotText(slots[equivIdx]);
   el.style.opacity = '1';
+  ensureEquivRotation();
+}
+
+function ensureEquivRotation(){
+  if (equivTimer) return;
+  equivTimer = setInterval(function(){
+    if (!hasLiked){ stopEquivRotation(); return; }
+    var s = buildEquivSlots();
+    if (s.length <= 1) return;
+    equivIdx = (equivIdx + 1) % s.length;
+    fadeEquivTo(equivSlotText(s[equivIdx]));
+  }, 30000);
+}
+
+function stopEquivRotation(){
+  if (equivTimer){ clearInterval(equivTimer); equivTimer = null; }
+}
+
+function fadeEquivTo(text){
+  var el = document.getElementById('equiv');
+  el.style.opacity = '0';
+  setTimeout(function(){ el.textContent = text; el.style.opacity = '1'; }, 600);
 }
 
 function applyLang(l){
@@ -386,6 +469,7 @@ function applyData(d){
   if (typeof d.injections === 'number') animateTo('injections', d.injections);
   if (typeof d.firstRecord === 'number'){ firstRecordMs = d.firstRecord; tickTimer(); }
   if (typeof d.kwhPerDay === 'number'){ kwhPerDay = d.kwhPerDay; renderEquiv(); }
+  if (d.equiv && typeof d.equiv === 'object'){ equivData = d.equiv; renderEquiv(); }
   if (typeof d.likes === 'number'){ likesShown = Math.max(likesShown, d.likes); renderLikeState(); }
   setDot(true);
 }
@@ -462,6 +546,7 @@ function sendLike(){
   likesShown = likesShown + 1;
   renderLikeState();
   popHeart();
+  renderEquiv();   // лайк відкриває товарну ротацію
   try { localStorage.setItem('zen_liked', '1'); } catch(e){}
 
   jsonpLike(function(data){
@@ -474,6 +559,7 @@ function sendLike(){
       likesShown = Math.max(0, likesShown - 1);
       try { localStorage.removeItem('zen_liked'); } catch(e){}
       renderLikeState();
+      renderEquiv();   // назад до фіксованого kWh
     }
   });
 }
