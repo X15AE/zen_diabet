@@ -60,7 +60,7 @@
     font-variant-numeric:tabular-nums;
     font-feature-settings:"tnum" 1;
     font-weight:600;
-    font-size:clamp(2.6rem,12vw,9rem);
+    font-size:clamp(2.8rem,16vw,9rem);
     letter-spacing:-0.02em;
     transition:text-shadow .25s ease, transform .25s ease;
     will-change:transform;
@@ -351,12 +351,16 @@ function buildEquivSlots(){
   return slots;
 }
 
+// біржі-джерела цін (статичні — біржі не міняються; мовно-нейтральні абревіатури)
+var EXCH = { oil:'ICE', wheat:'CBOT', coffee:'ICE', gold:'COMEX' };
+
 function equivSlotText(slot){
   var t = I18N[lang];
   if (slot.type === 'kwh') return t.equivKwh.replace('{n}', String(kwhPerDay));
   var val = localizeEquivValue(equivData[slot.key]);
   var name = t.equivNames[slot.key] || '';
-  return t.equivItem.replace('{v}', val).replace('{name}', name);
+  var exch = EXCH[slot.key] ? ' · ' + EXCH[slot.key] : '';
+  return t.equivItem.replace('{v}', val).replace('{name}', name) + exch;
 }
 
 var equivIdx = 0;
