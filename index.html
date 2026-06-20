@@ -114,6 +114,34 @@
     100%{box-shadow:0 0 0 12px rgba(92,203,138,0);}
   }
 
+  /* кнопка "подобається": [число] [♥] */
+  .like{
+    display:inline-flex; align-items:center; gap:7px;
+    background:none; border:none; padding:4px 6px; margin:0;
+    color:var(--cap); cursor:pointer; font:inherit;
+    -webkit-tap-highlight-color:transparent;
+    transition:color .25s ease, transform .12s ease;
+  }
+  .like:hover{ color:#fff; }
+  .like:active{ transform:scale(.93); }
+  .like-count{
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+    font-size:clamp(.9rem,2.4vw,1.3rem); letter-spacing:.06em;
+    min-width:1ch; text-align:right;
+  }
+  .like-heart{ width:18px; height:18px; display:block; }
+  .like-heart path{
+    fill:none; stroke:currentColor; stroke-width:2;
+    transition:fill .3s ease, stroke .3s ease;
+  }
+  .like.liked{ color:var(--accent); cursor:default; }
+  .like.liked .like-heart path{ fill:var(--accent); stroke:var(--accent); }
+  .like-heart.pop{ animation:heartpop .45s ease; }
+  @keyframes heartpop{
+    0%{transform:scale(1);} 35%{transform:scale(1.42);}
+    70%{transform:scale(.9);} 100%{transform:scale(1);}
+  }
+
   /* КНОПКИ керування (відео і музика окремо) */
   .controls{
     position:fixed; right:clamp(14px,3vw,28px); bottom:clamp(14px,3vh,34px);
@@ -211,6 +239,12 @@
   </div>
 
   <div class="footer">
+    <button class="like" id="likeBtn" type="button" aria-label="Подобається">
+      <span class="like-count" id="likeCount">0</span>
+      <svg class="like-heart" id="likeHeart" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+      </svg>
+    </button>
     <span class="dot" id="dot"></span>
     <span class="clock" id="timer">—</span>
   </div>
@@ -252,7 +286,8 @@ var I18N = {
     'cap-units': 'Одиниць інсуліну',
     'cap-injections': 'Уколів інсуліну',
     since: 'з лютого 2026',
-    equivKwh: 'день ≈ {n} кВт·год'
+    equivKwh: 'вартість дня ≈ {n} кВт·год',
+    likeLabel: 'Подобається'
   },
   en: {
     htmlLang: 'en', locale: 'en-US', langBtn: 'UK',
@@ -260,7 +295,8 @@ var I18N = {
     'cap-units': 'Insulin units',
     'cap-injections': 'Insulin injections',
     since: 'Since February 2026',
-    equivKwh: 'day ≈ {n} kWh'
+    equivKwh: 'a day ≈ {n} kWh',
+    likeLabel: 'Like'
   }
 };
 var lang = 'uk';
@@ -270,10 +306,10 @@ try { var saved = localStorage.getItem('zen_lang'); if (saved === 'en' || saved 
 var firstRecordMs = null;   // старт таймера
 var kwhPerDay = null;       // еквівалент для рядка Е
 
-// кеш форматувальників чисел за локаллю (усі числа — цілі)
+// кеш форматувальників чисел за локаллю (усі числа — цілі, без розділювача розрядів)
 var fmtCache = {};
 function getFmt(loc){
-  if (!fmtCache[loc]) fmtCache[loc] = new Intl.NumberFormat(loc, { maximumFractionDigits:0 });
+  if (!fmtCache[loc]) fmtCache[loc] = new Intl.NumberFormat(loc, { maximumFractionDigits:0, useGrouping:false });
   return fmtCache[loc];
 }
 function fmt(key, v){
@@ -302,6 +338,8 @@ function applyLang(l){
   document.getElementById('units').textContent      = fmt('units', shown.units);
   document.getElementById('injections').textContent = fmt('injections', shown.injections);
   renderEquiv();
+  var likeBtn = document.getElementById('likeBtn');
+  if (likeBtn) likeBtn.setAttribute('aria-label', t.likeLabel);
   try { localStorage.setItem('zen_lang', lang); } catch(e){}
 }
 
@@ -348,6 +386,7 @@ function applyData(d){
   if (typeof d.injections === 'number') animateTo('injections', d.injections);
   if (typeof d.firstRecord === 'number'){ firstRecordMs = d.firstRecord; tickTimer(); }
   if (typeof d.kwhPerDay === 'number'){ kwhPerDay = d.kwhPerDay; renderEquiv(); }
+  if (typeof d.likes === 'number'){ likesShown = Math.max(likesShown, d.likes); renderLikeState(); }
   setDot(true);
 }
 
@@ -376,6 +415,74 @@ function fetchStats(){
   script.src = ENDPOINT + sep + 'callback=' + fn + '&_=' + Date.now();
   document.head.appendChild(script);
 }
+
+/* ---- ЛАЙКИ (спільний лічильник; localStorage стереже від повтору з браузера) ---- */
+var hasLiked = false;
+try { hasLiked = localStorage.getItem('zen_liked') === '1'; } catch(e){}
+var likesShown = 0;
+
+function renderLikeState(){
+  var btn = document.getElementById('likeBtn');
+  var cnt = document.getElementById('likeCount');
+  if (!btn || !cnt) return;
+  cnt.textContent = String(likesShown);
+  if (hasLiked) btn.classList.add('liked'); else btn.classList.remove('liked');
+}
+
+function popHeart(){
+  var h = document.getElementById('likeHeart');
+  if (!h) return;
+  h.classList.remove('pop'); void h.offsetWidth; h.classList.add('pop');
+}
+
+/* JSONP-запит лайка на той самий ендпоінт із ?action=like */
+function jsonpLike(cb){
+  if (!ENDPOINT || ENDPOINT.indexOf('PASTE_') === 0){ cb(null); return; }
+  jsonpId++;
+  var fn = '__zen_like_' + jsonpId + '_' + Date.now();
+  var script = document.createElement('script');
+  var done = false;
+  var timer = setTimeout(function(){ if (done) return; done = true; cleanup(); cb(null); }, FALLBACK_TIMEOUT_MS);
+  function cleanup(){
+    try { delete window[fn]; } catch(e){ window[fn] = undefined; }
+    if (script.parentNode) script.parentNode.removeChild(script);
+    clearTimeout(timer);
+  }
+  window[fn] = function(data){ if (done) return; done = true; cleanup(); cb(data); };
+  script.onerror = function(){ if (done) return; done = true; cleanup(); cb(null); };
+  var sep = ENDPOINT.indexOf('?') >= 0 ? '&' : '?';
+  script.src = ENDPOINT + sep + 'action=like&callback=' + fn + '&_=' + Date.now();
+  document.head.appendChild(script);
+}
+
+function sendLike(){
+  if (hasLiked) return;                       // уже лайкнуто з цього браузера
+  // оптимістично: одразу показуємо +1 і заповнене серце
+  hasLiked = true;
+  likesShown = likesShown + 1;
+  renderLikeState();
+  popHeart();
+  try { localStorage.setItem('zen_liked', '1'); } catch(e){}
+
+  jsonpLike(function(data){
+    if (data && data.ok && typeof data.likes === 'number'){
+      likesShown = Math.max(likesShown, data.likes);   // звіряємось із сервером
+      renderLikeState();
+    } else {
+      // лайк не зарахувався — відкат, щоб можна було повторити
+      hasLiked = false;
+      likesShown = Math.max(0, likesShown - 1);
+      try { localStorage.removeItem('zen_liked'); } catch(e){}
+      renderLikeState();
+    }
+  });
+}
+
+(function(){
+  var btn = document.getElementById('likeBtn');
+  if (btn) btn.addEventListener('click', sendLike);
+  renderLikeState();   // показати стан (заповнене серце, якщо вже лайкав) до першого fetch
+})();
 
 /* ---- таймер: скільки ведеться лічильник (від firstRecord) ---- */
 function tickTimer(){
